@@ -29,27 +29,37 @@ def import_csv_to_oracle_manual_fixed():
         print(f"\n--- Bắt đầu xử lý file: {path.name} ---")
     
         try:
-         
             df = pd.read_csv(path, encoding='utf-8-sig')
             print(f"   -> Đọc thành công {len(df)} dòng.")
 
-   
             table_name = path.stem.replace(" ", "_").upper()
-            owner = ORACLE_CONN['user'].upper()
             
-   
-            cursor.execute("""
-                SELECT COUNT(*) FROM ALL_TABLES 
-                WHERE TABLE_NAME = :table_name AND OWNER = :owner
-            """, table_name=table_name, owner=owner)
-            
-            if cursor.fetchone()[0] == 0:
+            # <<< THÊM MỚI: Logic xóa bảng nếu tồn tại >>>
+            try:
+                print(f"   -> Đang kiểm tra và xóa bảng cũ (nếu có): {table_name}")
+                # Sử dụng PL/SQL để không bị lỗi nếu bảng không tồn tại
+                drop_sql = f"""
+                BEGIN
+                   EXECUTE IMMEDIATE 'DROP TABLE "{table_name}"';
+                EXCEPTION
+                   WHEN OTHERS THEN
+                      IF SQLCODE != -942 THEN
+                         RAISE;
+                      END IF;
+                END;
+                """
+                cursor.execute(drop_sql)
+                print(f"   -> Đã xóa bảng cũ (nếu có).")
+            except Exception as e:
+                print(f"[WARN] Không thể xóa bảng {table_name} (có thể vì nó không tồn tại): {e}")
 
-                df.columns = [col.replace(' ', '_').replace('(', '').replace(')', '') for col in df.columns]
-                cols_sql = ', '.join([f'"{col}" VARCHAR2(4000)' for col in df.columns])
-                create_sql = f'CREATE TABLE "{table_name}" ({cols_sql})'
-                cursor.execute(create_sql)
-                print(f"   -> Đã tạo bảng mới: {table_name}")
+
+            # <<< THAY ĐỔI: Luôn tạo lại bảng >>>
+            df.columns = [col.replace(' ', '_').replace('(', '').replace(')', '') for col in df.columns]
+            cols_sql = ', '.join([f'"{col}" VARCHAR2(4000)' for col in df.columns])
+            create_sql = f'CREATE TABLE "{table_name}" ({cols_sql})'
+            cursor.execute(create_sql)
+            print(f"   -> Đã tạo lại bảng mới: {table_name}")
 
 
             rows_to_insert = [tuple(x) for x in df.astype(str).where(pd.notna(df), None).values]
